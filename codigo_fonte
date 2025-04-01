@@ -1,0 +1,133 @@
+import urllib.request
+import re
+import zipfile
+import os
+from http.client import HTTPResponse
+from typing import List, Tuple
+import logging
+from datetime import datetime
+
+# Configuração inicial
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+class BuscadorWeb:
+    URL_BASE = "https://www.gov.br/ans/pt-br/acesso-a-informacao/participacao-da-sociedade/atualizacao-do-rol-de-procedimentos"
+    PASTA_DOWNLOAD = "downloads"
+    NOME_ZIP = "anexos.zip"
+
+    def __init__(self):
+        self.criar_pasta_download()
+
+    def criar_pasta_download(self) -> None:
+        """Para maior segurança, decidi criar uma pasta direto para o download caso não exista."""
+        if not os.path.exists(self.PASTA_DOWNLOAD):
+            os.makedirs(self.PASTA_DOWNLOAD)
+            logger.info(f"Pasta criada: {self.PASTA_DOWNLOAD}")
+
+    def buscar_conteudo_pagina(self) -> str:
+        """Aqui inicia o comando para encontrar a página web solicitada."""
+        try:
+            logger.info(f"Procurando conteúdo em {self.URL_BASE}")
+            with urllib.request.urlopen(self.URL_BASE) as resposta:
+                return resposta.read().decode('utf-8')
+        except Exception as e:
+            logger.error(f"Erro ao encontrar o conteúdo solicitado: {e}")
+            raise
+
+    def extrair_links_pdf(self, conteudo: str) -> List[Tuple[str, str]]:
+        """Esse comando extrai os links em pdf do Anexo I e II da página solicitada."""
+        try:
+            # Padrão para encontrar links PDF contendo "Anexo I" ou "Anexo II"
+            padrao = r'href="([^"]*(?:Anexo[_\s](?:I|II)[^"]*\.pdf))"'
+            correspondencias = re.finditer(padrao, conteudo, re.IGNORECASE)
+            
+            links_pdf = []
+            for correspondencia in correspondencias:
+                url = correspondencia.group(1)
+                nome_arquivo = url.split('/')[-1]
+                if 'anexo' in nome_arquivo.lower() and nome_arquivo.lower().endswith('.pdf'):
+                    links_pdf.append((url, nome_arquivo))
+            
+            logger.info(f"Encontrados {len(links_pdf)} links PDF")
+            return links_pdf
+        except Exception as e:
+            logger.error(f"Erro ao extrair links PDF: {e}")
+            raise
+
+    def baixar_arquivo(self, url: str, nome_arquivo: str) -> bool:
+        """Baixa os arquivos requeridos da URL fornecida."""
+        caminho_arquivo = os.path.join(self.PASTA_DOWNLOAD, nome_arquivo)
+        try:
+            logger.info(f"Baixando {nome_arquivo}")
+            urllib.request.urlretrieve(url, caminho_arquivo)
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao baixar {nome_arquivo}: {e}")
+            return False
+
+    def criar_zip(self, arquivos: List[str]) -> bool:
+        """Cria um arquivo ZIP contendo todos os PDFs baixados."""
+        try:
+            caminho_zip = os.path.join(self.PASTA_DOWNLOAD, self.NOME_ZIP)
+            logger.info(f"Criando arquivo ZIP: {caminho_zip}")
+            
+            with zipfile.ZipFile(caminho_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for nome_arquivo in arquivos:
+                    caminho_arquivo = os.path.join(self.PASTA_DOWNLOAD, nome_arquivo)
+                    if os.path.exists(caminho_arquivo):
+                        zipf.write(caminho_arquivo, nome_arquivo)
+                        logger.info(f"Adicionado {nome_arquivo} ao ZIP")
+            return True
+        except Exception as e:
+            logger.error(f"Erro ao criar arquivo ZIP: {e}")
+            return False
+
+    def executar(self) -> None:
+        """Esse é o comando para executar o processo de busca na web."""
+        try:
+            # Inicia contagem de tempo
+            tempo_inicio = datetime.now()
+            
+            # Busca conteúdo da página
+            conteudo = self.buscar_conteudo_pagina()
+            
+            # Extrai links PDF
+            links_pdf = self.extrair_links_pdf(conteudo)
+            
+            if not links_pdf:
+                logger.warning("Nenhum link PDF encontrado")
+                return
+            
+            # Baixa arquivos
+            arquivos_baixados = []
+            for url, nome_arquivo in links_pdf:
+                if self.baixar_arquivo(url, nome_arquivo):
+                    arquivos_baixados.append(nome_arquivo)
+            
+            # Cria arquivo ZIP
+            if arquivos_baixados:
+                if self.criar_zip(arquivos_baixados):
+                    logger.info("Processo concluído com sucesso")
+                    
+                    # Aqui decidi incrementar o processo com o calculo e registra tempo de execução, bem como do tamanho do arquivo ZIP
+                    tempo_execucao = datetime.now() - tempo_inicio
+                    logger.info(f"Tempo total de execução: {tempo_execucao}")
+                    
+                    # Registra tamanhos dos arquivos
+                    caminho_zip = os.path.join(self.PASTA_DOWNLOAD, self.NOME_ZIP)
+                    tamanho_zip = os.path.getsize(caminho_zip) / (1024 * 1024)  # Converte para MB
+                    logger.info(f"Tamanho do arquivo ZIP: {tamanho_zip:.2f} MB")
+            else:
+                logger.warning("Nenhum arquivo foi baixado")
+                
+        except Exception as e:
+            logger.error(f"Erro no processo de busca: {e}")
+            raise
+
+if __name__ == "__main__":
+    buscador = BuscadorWeb()
+    buscador.executar()
